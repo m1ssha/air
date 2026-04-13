@@ -1,0 +1,6 @@
+.env
+.git
+.gitmodules
+**/bin/
+**/obj/
+vendor/

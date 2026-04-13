@@ -1,0 +1,95 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: airsiem-mongo
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - airsiem_mongo_data:/data/db
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: airsiem-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RMQ_USER:-siemuser}
+      RABBITMQ_DEFAULT_PASS: ${RMQ_PASS:-siempass}
+    ports:
+      - "${RMQ_PORT_EXTERNAL:-5672}:5672"
+      - "${RMQ_MGMT_PORT:-15672}:15672"
+
+  buggy:
+    image: php:7.4-apache
+    container_name: airsiem-buggy
+    restart: unless-stopped
+    ports:
+      - "${BUGGY_PORT:-8080}:80"
+    volumes:
+      - buggy_logs:/var/log/apache2
+      - ./buggy:/var/www/html/buggy
+
+  console:
+    image: php:8.2-apache
+    container_name: airsiem-console
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "${CONSOLE_PORT:-8081}:80"
+    volumes:
+      - ./console:/var/www/html
+    command: >
+      bash -lc "
+      apt-get update &&
+      apt-get install -y git unzip libzip-dev curl &&
+      docker-php-ext-install zip &&
+      pecl install mongodb &&
+      docker-php-ext-enable mongodb &&
+      curl -sS https://getcomposer.org/installer | php &&
+      php composer.phar install &&
+      apache2-foreground
+      "
+
+  airsiem-core:
+    build:
+      context: .
+      dockerfile: ./docker/airsiem-core.Dockerfile
+    container_name: airsiem-core
+    restart: unless-stopped
+    depends_on:
+      - mongo
+      - rabbitmq
+    volumes:
+      - ./src/AirSIEM:/src/AirSIEM
+      - ./rules:/opt/airsiem/rules
+    environment:
+      RMQ_HOST: rabbitmq
+      RMQ_PORT: "5672"
+      RMQ_USER: ${RMQ_USER:-siemuser}
+      RMQ_PASS: ${RMQ_PASS:-siempass}
+      MONGO_HOST: mongo
+      MONGO_PORT: "27017"
+
+  airsiem-connector:
+    build:
+      context: .
+      dockerfile: ./docker/airsiem-connector.Dockerfile
+    container_name: airsiem-connector
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - buggy
+    volumes:
+      - ./src/AirSIEM:/src/AirSIEM
+      - buggy_logs:/apache-logs
+    environment:
+      RMQ_HOST: rabbitmq
+      RMQ_PORT: "5672"
+      RMQ_USER: ${RMQ_USER:-siemuser}
+      RMQ_PASS: ${RMQ_PASS:-siempass}
+      ACCESS_LOG: /apache-logs/access.log
+
+volumes:
+  airsiem_mongo_data:
+  buggy_logs:
